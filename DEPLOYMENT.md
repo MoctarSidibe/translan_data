@@ -10,20 +10,23 @@
 ## Current Status
 
 ```
-✅ 1. Server dependencies installed      (python3.12, postgresql, nginx, git)
-✅ 2. PostgreSQL setup                   (translan_db, translan_user, vector extension)
-✅ 3. Repo cloned                        (/var/www/translan_data/)
-✅ 4. Python venv + dependencies         (venv/bin/python3.12)
-✅ 5. .env file created                  (DATABASE_URL, SECRET_KEY set)
-✅ 6. Database tables initialized        (create_tables ran clean)
-✅ 7. Systemd service running            (translan_data.service active)
-✅ 8. Nginx configured                   (/translan_data/ proxied to :8100)
-✅ 9. API live and healthy               (curl /translan_data/health → {"status":"ok"})
-✅ 10. Production URL set in mobile app  (mobile/services/api.ts pushed to GitHub)
+✅ 1.  Server dependencies installed      (python3.12, postgresql, nginx, git)
+✅ 2.  PostgreSQL setup                   (translan_db, translan_user, vector extension)
+✅ 3.  Repo cloned                        (/var/www/translan_data/)
+✅ 4.  Python venv + dependencies         (venv/bin/python3.12)
+✅ 5.  .env file created                  (DATABASE_URL, SECRET_KEY set)
+✅ 6.  Database tables initialized        (create_tables ran clean)
+✅ 7.  Systemd service running            (translan_data.service active)
+✅ 8.  Nginx configured                   (/translan_data/ proxied to :8100)
+✅ 9.  API live and healthy               (curl /translan_data/health → {"status":"ok"})
+✅ 10. Production URL set in mobile app   (mobile/services/api.ts pushed to GitHub)
+✅ 11. GitHub webhook created             (pushes to main trigger Jenkins)
 
-⏳ 11. Jenkins pipeline setup            ← YOU ARE HERE
-⏳ 12. APK build via Jenkins
+⏳ 12. Jenkins — add Expo token           ← YOU ARE HERE
+⏳ 13. APK build via Jenkins
 ```
+
+> **Jenkins role:** APK build only. Backend deploys are done manually via `git pull` + `systemctl restart` on the server (or the day-to-day commands in §8).
 
 ---
 
@@ -226,67 +229,67 @@ export const API_BASE = __DEV__
 
 ---
 
-## ⏳ 6. Jenkins CI/CD Pipeline  ← NEXT STEP
+## ⏳ 6. Jenkins — APK Build Pipeline  ← NEXT STEP
 
 Jenkins is at `http://37.60.240.199:8081/jenkins`.  
-The `Jenkinsfile` is already in the repo root — Jenkins just needs to be pointed at it.
+**Jenkins is used for APK builds only.** Backend deploys happen via `git pull` on the server directly.  
+The `Jenkinsfile` is already in the repo root.
 
-### 6.1 Add SSH credential (so Jenkins can deploy to the server)
+### 6.1 Install Node.js on the Jenkins server
 
-1. Go to **Manage Jenkins → Credentials → System → Global credentials → Add Credentials**
-2. Fill in:
-   - **Kind:** SSH Username with private key
-   - **ID:** `translan-server-ssh`
-   - **Username:** `root`
-   - **Private key:** Enter directly → paste the private key of the SSH key that can connect to `173.212.220.11`
+Jenkins needs Node.js to run `npm ci` and `eas-cli`:
 
-> If you connect to the server with `ssh root@173.212.220.11` from your machine, the private key is at `~/.ssh/id_rsa` (or `id_ed25519`) on your local machine.
+```bash
+# On the Jenkins server (37.60.240.199) as root:
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+node --version   # should show v20.x
+```
 
-### 6.2 Create the Pipeline job
+### 6.2 Add Expo token credential
 
-1. **New Item** → name it `translan_data` → select **Pipeline** → OK
+EAS Build (cloud APK builder) needs your Expo account token so Jenkins can authenticate without a browser.
+
+1. Get your token: go to **https://expo.dev/accounts/[your-account]/settings/access-tokens** → create a token
+2. In Jenkins: **Manage Jenkins → Credentials → System → Global → Add Credentials**
+   - Kind: **Secret text**
+   - ID: `expo-token`
+   - Secret: paste your Expo token
+
+### 6.3 Create the Pipeline job
+
+1. **New Item** → name it `translan_data` → **Pipeline** → OK
 2. Under **Pipeline**:
    - Definition: **Pipeline script from SCM**
    - SCM: **Git**
    - Repository URL: `https://github.com/MoctarSidibe/translan_data.git`
    - Branch: `*/main`
    - Script Path: `Jenkinsfile`
-3. Click **Save**
+3. **Save** → **Build Now**
 
-### 6.3 Run the first build
+The pipeline will:
+1. Checkout the repo
+2. `npm ci` inside `mobile/`
+3. Trigger `eas build --platform android --profile preview` (cloud build — no Android SDK needed on Jenkins)
+4. EAS sends you a download link via expo.dev when the APK is ready
 
-Click **Build Now** — it will:
-1. Clone the repo
-2. Check Python syntax
-3. SSH into `173.212.220.11`, do `git pull`, `pip install`, `systemctl restart translan_data`
-4. Hit `/translan_data/health` and confirm HTTP 200
+### 6.4 GitHub webhook (already done ✅)
 
-### 6.4 Auto-build on every push (optional)
-
-Add a GitHub webhook:
-- GitHub repo → **Settings → Webhooks → Add webhook**
-- Payload URL: `http://37.60.240.199:8081/jenkins/github-webhook/`
-- Content type: `application/json`
-- Event: **Just the push event**
+Every push to `main` will automatically trigger a new APK build in Jenkins.
 
 ---
 
-## ⏳ 7. APK Build
+## ⏳ 7. APK Download & Install
 
-The APK is built locally (Expo does not run on the server). On your **local machine**:
+After Jenkins triggers the EAS build:
 
-```bash
-cd "c:/Users/user/OneDrive/Documents/translan/mobile"
-npm install -g eas-cli
-eas login
-eas build --platform android --profile preview
-```
+1. Go to **https://expo.dev** → your project → **Builds**
+2. Wait for the build to finish (~5–10 min)
+3. Download the `.apk` file
+4. Install directly on your Android device
 
-EAS will give you a download link for the APK when done.
-Install it directly on your Android device — no Play Store needed for testing.
-
-> `preview` profile = installable APK.  
-> `production` profile = AAB for Play Store submission.
+> `preview` profile = installable APK (no Play Store needed).  
+> `production` profile = AAB for Play Store submission later.
 
 ---
 
