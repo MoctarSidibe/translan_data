@@ -5,7 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 // If testing on the Android emulator only, you can use 10.0.2.2:8000 instead.
 export const API_BASE = __DEV__
   ? 'http://192.168.1.67:8000'
-  : 'https://api.translandata.com'; // replace with production URL when deployed
+  : 'http://173.212.220.11/translan_data';
 
 const api = axios.create({
   baseURL: API_BASE,
