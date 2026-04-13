@@ -39,15 +39,37 @@ ssh root@173.212.220.11
 ### 1.2 System dependencies
 ```bash
 apt update && apt upgrade -y
-apt install -y python3.11 python3.11-venv python3-pip \
+apt install -y python3 python3-venv python3-pip \
                postgresql postgresql-contrib \
                nginx git curl build-essential \
                libpq-dev
 ```
 
+> **Check your Python version** — FastAPI requires 3.10+:
+> ```bash
+> python3 --version
+> ```
+> If it shows **< 3.10**, install a newer version via the deadsnakes PPA:
+> ```bash
+> apt install -y software-properties-common
+> add-apt-repository ppa:deadsnakes/ppa
+> apt update
+> apt install -y python3.11 python3.11-venv python3.11-distutils
+> # Then use python3.11 instead of python3 in all commands below
+> ```
+
 ### 1.3 Install pgvector extension
+
+First, find your PostgreSQL version:
 ```bash
-apt install -y postgresql-server-dev-15
+psql --version
+# Example output: psql (PostgreSQL) 15.x
+```
+
+Install the matching dev headers and build pgvector:
+```bash
+PG_VER=$(psql --version | grep -oP '\d+' | head -1)
+apt install -y postgresql-server-dev-${PG_VER}
 git clone https://github.com/pgvector/pgvector.git /tmp/pgvector
 cd /tmp/pgvector && make && make install
 ```
@@ -93,7 +115,7 @@ git clone https://github.com/MoctarSidibe/translan_data.git .
 ### 3.2 Python virtual environment
 ```bash
 cd /var/www/translan_data/backend
-python3.11 -m venv venv
+python3 -m venv venv          # use python3.11 here if you installed it via deadsnakes
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -122,6 +144,7 @@ MAX_FILE_SIZE_MB=50
 ```bash
 cd /var/www/translan_data/backend
 source venv/bin/activate
+# The venv's python is always just "python" after activation
 python -c "import asyncio; from app.database import create_tables; asyncio.run(create_tables())"
 ```
 
