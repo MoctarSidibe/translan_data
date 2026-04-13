@@ -134,36 +134,44 @@ pip install -r requirements.txt
 ```
 
 ### 3.3 Environment variables
+
+> **This step must be done before initializing the database.** The app will crash without it.
+
+**Step 1** — Generate a secret key:
 ```bash
-cp /var/www/translan_data/backend/.env.example /var/www/translan_data/backend/.env
-nano /var/www/translan_data/backend/.env
+python3 -c "import secrets; print(secrets.token_hex(32))"
+# copy the output — you'll paste it as SECRET_KEY below
 ```
 
-Create `/var/www/translan_data/backend/.env` with:
-```env
+**Step 2** — Create the `.env` file (replace the password and paste your secret key):
+```bash
+cat > /var/www/translan_data/backend/.env << 'EOF'
 DATABASE_URL=postgresql+asyncpg://translan_user:CHANGE_THIS_PASSWORD@localhost:5432/translan_db
-SECRET_KEY=GENERATE_A_STRONG_RANDOM_KEY_HERE
+SECRET_KEY=PASTE_YOUR_GENERATED_KEY_HERE
 GROQ_API_KEY=your_groq_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_api_key_here   # optional for now
+ANTHROPIC_API_KEY=
 BACKEND_CORS_ORIGINS=["http://173.212.220.11","http://173.212.220.11:8100","*"]
 UPLOAD_DIR=/var/www/translan_data/backend/uploads
 MAX_FILE_SIZE_MB=50
+EOF
 ```
 
-> Generate a secret key: `python3 -c "import secrets; print(secrets.token_hex(32))"`
+Verify it was created:
+```bash
+cat /var/www/translan_data/backend/.env
+```
 
 ### 3.4 Initialize the database
+
+> **The venv must be active and `.env` must exist before running this.**
+
 ```bash
 cd /var/www/translan_data/backend
 source venv/bin/activate
-# The venv's python is always just "python" after activation
 python -c "import asyncio; from app.database import create_tables; asyncio.run(create_tables())"
 ```
 
-Or run the SQL schema directly:
-```bash
-psql -U translan_user -d translan_db -h localhost -f setup_db.sql
-```
+You should see no errors. If tables already exist, it's safe — SQLAlchemy skips them.
 
 ### 3.5 Systemd service
 Create `/etc/systemd/system/translan_data.service`:
@@ -291,6 +299,8 @@ Jenkins is at `http://37.60.240.199:8081/jenkins`.
    - ID: `translan-server-ssh`
    - Username: `root`
    - Private key: paste your SSH private key for `173.212.220.11`
+translan_data
+
 
 2. **GitHub credential** (if private repo):
    - ID: `github-translan`
