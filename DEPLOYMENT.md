@@ -22,11 +22,13 @@
 ✅ 10. Production URL set in mobile app   (mobile/services/api.ts pushed to GitHub)
 ✅ 11. GitHub webhook created             (pushes to main trigger Jenkins)
 
-⏳ 12. Jenkins — add Expo token           ← YOU ARE HERE
-⏳ 13. APK build via Jenkins
+⏳ 12. SSH key: Jenkins (37.60.240.199) → App server (173.212.220.11)  ← YOU ARE HERE
+⏳ 13. Add SSH credential in Jenkins UI
+⏳ 14. Create Pipeline job in Jenkins
+⏳ 15. APK build
 ```
 
-> **Jenkins role:** APK build only. Backend deploys are done manually via `git pull` + `systemctl restart` on the server (or the day-to-day commands in §8).
+> **Jenkins role:** Full CI/CD — on every push to `main`: deploy backend to `173.212.220.11` via SSH + build APK via EAS.
 
 ---
 
@@ -229,36 +231,45 @@ export const API_BASE = __DEV__
 
 ---
 
-## ⏳ 6. Jenkins — APK Build Pipeline  ← NEXT STEP
+## ⏳ 6. Jenkins CI/CD Pipeline  ← NEXT STEP
 
-Jenkins is at `http://37.60.240.199:8081/jenkins`.  
-**Jenkins is used for APK builds only.** Backend deploys happen via `git pull` on the server directly.  
-The `Jenkinsfile` is already in the repo root.
+Jenkins (`37.60.240.199:8081`) builds the APK **and** deploys the backend to `173.212.220.11` on every push to `main`.  
+The `Jenkinsfile` is already in the repo root. GitHub webhook is already configured ✅.
 
-### 6.1 Install Node.js on the Jenkins server
+### 6.1 Set up SSH key from Jenkins → App server
 
-Jenkins needs Node.js to run `npm ci` and `eas-cli`:
+Jenkins needs passwordless SSH access to `173.212.220.11` to run `git pull` and `systemctl restart`.
 
+**On the Jenkins server (`37.60.240.199`):**
 ```bash
-# On the Jenkins server (37.60.240.199) as root:
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt install -y nodejs
-node --version   # should show v20.x
+ssh-keygen -t ed25519 -f ~/.ssh/translan_deploy -N ""
+cat ~/.ssh/translan_deploy.pub   # copy this output
 ```
 
-### 6.2 Add Expo token credential
+**On the app server (`173.212.220.11`):**
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo "PASTE_PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
 
-EAS Build (cloud APK builder) needs your Expo account token so Jenkins can authenticate without a browser.
+**Test the connection from Jenkins server:**
+```bash
+ssh -i ~/.ssh/translan_deploy root@173.212.220.11
+# must connect without asking for a password
+```
 
-1. Get your token: go to **https://expo.dev/accounts/[your-account]/settings/access-tokens** → create a token
-2. In Jenkins: **Manage Jenkins → Credentials → System → Global → Add Credentials**
-   - Kind: **Secret text**
-   - ID: `expo-token`
-   - Secret: paste your Expo token
+### 6.2 Add SSH credential to Jenkins
+
+**Manage Jenkins → Credentials → System → Global → Add Credentials:**
+- Kind: **SSH Username with private key**
+- ID: `translan-deploy-key`
+- Username: `root`
+- Private key → Enter directly → paste contents of `~/.ssh/translan_deploy`
 
 ### 6.3 Create the Pipeline job
 
-1. **New Item** → name it `translan_data` → **Pipeline** → OK
+1. **New Item** → `translan_data` → **Pipeline** → OK
 2. Under **Pipeline**:
    - Definition: **Pipeline script from SCM**
    - SCM: **Git**
@@ -267,15 +278,15 @@ EAS Build (cloud APK builder) needs your Expo account token so Jenkins can authe
    - Script Path: `Jenkinsfile`
 3. **Save** → **Build Now**
 
-The pipeline will:
-1. Checkout the repo
-2. `npm ci` inside `mobile/`
-3. Trigger `eas build --platform android --profile preview` (cloud build — no Android SDK needed on Jenkins)
-4. EAS sends you a download link via expo.dev when the APK is ready
+**What the pipeline does on every push:**
+1. Checkout repo from GitHub
+2. SSH into `173.212.220.11` → `git pull` + `pip install` + `systemctl restart translan_data`
+3. Hit `/translan_data/health` → confirm HTTP 200
+4. `npm ci` + `eas build --platform android` → APK ready on expo.dev
 
 ### 6.4 GitHub webhook (already done ✅)
 
-Every push to `main` will automatically trigger a new APK build in Jenkins.
+Every push to `main` automatically triggers the full pipeline.
 
 ---
 
