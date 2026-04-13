@@ -1,0 +1,40 @@
+# ── Mobile (Expo / React Native) ─────────────────────────────────────────────
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/expo-env.d.ts
+mobile/.metro-health-check*
+mobile/ios/
+mobile/android/
+mobile/.kotlin/
+mobile/*.orig.*
+mobile/*.tsbuildinfo
+
+# ── Backend (Python / FastAPI) ────────────────────────────────────────────────
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+backend/.venv/
+backend/venv/
+backend/env/
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/*.db
+backend/*.sqlite3
+backend/.env
+backend/.env.*
+
+# ── Claude memory / session files ─────────────────────────────────────────────
+.claude/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.pem
+*.key
+*.p12
+*.jks
+npm-debug.*
+yarn-debug.*
+yarn-error.*
