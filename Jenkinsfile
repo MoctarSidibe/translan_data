@@ -26,9 +26,9 @@ pipeline {
         // ── Backend deploy ──────────────────────────────────────────────────
         stage('Deploy Backend') {
             steps {
-                sshagent(credentials: [env.SSH_CRED_ID]) {
+                withCredentials([sshUserPrivateKey(credentialsId: env.SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no root@${APP_SERVER} '
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no root@${APP_SERVER} '
                             set -e
                             cd ${DEPLOY_DIR}
                             echo "Pulling latest code..."
