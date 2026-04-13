@@ -19,16 +19,21 @@
 ✅ 7.  Systemd service running            (translan_data.service active)
 ✅ 8.  Nginx configured                   (/translan_data/ proxied to :8100)
 ✅ 9.  API live and healthy               (curl /translan_data/health → {"status":"ok"})
-✅ 10. Production URL set in mobile app   (mobile/services/api.ts pushed to GitHub)
+✅ 10. Production URL set in mobile app   (mobile/services/api.ts → http://173.212.220.11/translan_data)
 ✅ 11. GitHub webhook created             (pushes to main trigger Jenkins)
+✅ 12. SSH key set up                     (Jenkins 37.60.240.199 → App server 173.212.220.11, no password)
+✅ 13. Jenkins SSH credential added       (ID: translan-deploy-key)
+✅ 14. Jenkins Pipeline job created       (translan_data, script from SCM)
+✅ 15. Jenkins deploy working             (git pull + pip install + systemctl restart passing)
+✅ 16. Jenkins health check passing       (HTTP 200 on /translan_data/health)
 
-⏳ 12. SSH key: Jenkins (37.60.240.199) → App server (173.212.220.11)  ← YOU ARE HERE
-⏳ 13. Add SSH credential in Jenkins UI
-⏳ 14. Create Pipeline job in Jenkins
-⏳ 15. APK build
+⏳ 17. APK build via Jenkins              ← YOU ARE HERE (peer dep fix in progress)
 ```
 
-> **Jenkins role:** Full CI/CD — on every push to `main`: deploy backend to `173.212.220.11` via SSH + build APK via EAS.
+> **Jenkins role:** Full CI/CD — on every push to `main`:
+> 1. SSH into `173.212.220.11` → `git pull` + `pip install` + `systemctl restart`
+> 2. Health check → `/translan_data/health` must return HTTP 200
+> 3. `npm install --legacy-peer-deps` + `eas build --platform android`
 
 ---
 
@@ -231,76 +236,79 @@ export const API_BASE = __DEV__
 
 ---
 
-## ⏳ 6. Jenkins CI/CD Pipeline  ← NEXT STEP
+## ✅ 6. Jenkins CI/CD Pipeline (done)
 
-Jenkins (`37.60.240.199:8081`) builds the APK **and** deploys the backend to `173.212.220.11` on every push to `main`.  
-The `Jenkinsfile` is already in the repo root. GitHub webhook is already configured ✅.
+Jenkins (`37.60.240.199:8081`) deploys the backend to `173.212.220.11` and builds the APK on every push to `main`.
 
-### 6.1 Set up SSH key from Jenkins → App server
-
-Jenkins needs passwordless SSH access to `173.212.220.11` to run `git pull` and `systemctl restart`.
+### 6.1 SSH key — Jenkins → App server ✅
 
 **On the Jenkins server (`37.60.240.199`):**
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/translan_deploy -N ""
-cat ~/.ssh/translan_deploy.pub   # copy this output
+cat ~/.ssh/translan_deploy.pub   # copy output
 ```
 
 **On the app server (`173.212.220.11`):**
 ```bash
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-echo "PASTE_PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
+echo "PASTE_PUBLIC_KEY" >> ~/.ssh/authorized_keys
 ```
 
-**Test the connection from Jenkins server:**
+**Test:**
 ```bash
-ssh -i ~/.ssh/translan_deploy root@173.212.220.11
-# must connect without asking for a password
+ssh -i ~/.ssh/translan_deploy root@173.212.220.11   # no password prompt = success
 ```
 
-### 6.2 Add SSH credential to Jenkins
+### 6.2 Jenkins credential ✅
 
-**Manage Jenkins → Credentials → System → Global → Add Credentials:**
+**Manage Jenkins → Credentials → Global → Add Credentials:**
 - Kind: **SSH Username with private key**
 - ID: `translan-deploy-key`
 - Username: `root`
-- Private key → Enter directly → paste contents of `~/.ssh/translan_deploy`
+- Private key: paste contents of `~/.ssh/translan_deploy`
 
-### 6.3 Create the Pipeline job
+> Note: `sshagent` plugin is NOT installed on this Jenkins.
+> The Jenkinsfile uses `withCredentials([sshUserPrivateKey(...)])` instead — no plugin needed.
 
-1. **New Item** → `translan_data` → **Pipeline** → OK
-2. Under **Pipeline**:
-   - Definition: **Pipeline script from SCM**
-   - SCM: **Git**
-   - Repository URL: `https://github.com/MoctarSidibe/translan_data.git`
-   - Branch: `*/main`
-   - Script Path: `Jenkinsfile`
-3. **Save** → **Build Now**
+### 6.3 Pipeline job ✅
 
-**What the pipeline does on every push:**
-1. Checkout repo from GitHub
-2. SSH into `173.212.220.11` → `git pull` + `pip install` + `systemctl restart translan_data`
-3. Hit `/translan_data/health` → confirm HTTP 200
-4. `npm ci` + `eas build --platform android` → APK ready on expo.dev
+- New Item → `translan_data` → **Pipeline**
+- Definition: **Pipeline script from SCM**
+- SCM: Git → `https://github.com/MoctarSidibe/translan_data.git`
+- Branch: `*/main` — Script Path: `Jenkinsfile`
 
-### 6.4 GitHub webhook (already done ✅)
+### 6.4 GitHub webhook ✅
 
-Every push to `main` automatically triggers the full pipeline.
+GitHub repo → Settings → Webhooks → `http://37.60.240.199:8081/jenkins/github-webhook/`
+
+### 6.5 Known issues resolved
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `ansiColor not found` | AnsiColor plugin not installed | Removed from Jenkinsfile |
+| `sshagent not found` | SSH Agent plugin not installed | Replaced with `withCredentials + sshUserPrivateKey` |
+| `npm ci` lock file out of sync | package-lock.json stale | Ran `npm install` locally, committed updated lock file |
+| `npm ci` peer dep conflict | react@19.1.0 vs react-dom@19.2.5 | Switched to `npm install --legacy-peer-deps` |
 
 ---
 
-## ⏳ 7. APK Download & Install
+## ⏳ 7. APK Download & Install  ← IN PROGRESS
 
-After Jenkins triggers the EAS build:
+Jenkins triggers EAS cloud build automatically on every push to `main`.
 
+After Jenkins runs the Build APK stage:
 1. Go to **https://expo.dev** → your project → **Builds**
-2. Wait for the build to finish (~5–10 min)
+2. Wait for the cloud build to finish (~5–10 min)
 3. Download the `.apk` file
-4. Install directly on your Android device
+4. Install directly on your Android device — no Play Store needed
 
-> `preview` profile = installable APK (no Play Store needed).  
+> `preview` profile = installable APK.  
 > `production` profile = AAB for Play Store submission later.
+
+To trigger manually without a push:
+```bash
+cd mobile
+npx eas-cli build --platform android --profile preview
+```
 
 ---
 
