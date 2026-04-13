@@ -71,7 +71,7 @@ pipeline {
         stage('Build APK') {
             steps {
                 dir('mobile') {
-                    sh 'npm ci'
+                    sh 'npm install --legacy-peer-deps'
                     sh 'npx eas-cli build --platform android --profile preview --non-interactive --no-wait'
                 }
             }
