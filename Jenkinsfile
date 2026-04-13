@@ -72,7 +72,9 @@ pipeline {
             steps {
                 dir('mobile') {
                     sh 'npm install --legacy-peer-deps'
-                    sh 'npx eas-cli build --platform android --profile preview --non-interactive --no-wait'
+                    withCredentials([string(credentialsId: 'expo-token', variable: 'EXPO_TOKEN')]) {
+                        sh 'EXPO_TOKEN=$EXPO_TOKEN npx eas-cli build --platform android --profile preview --non-interactive --no-wait'
+                    }
                 }
             }
         }
