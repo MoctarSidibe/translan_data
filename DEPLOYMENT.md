@@ -83,24 +83,33 @@ mkdir -p /var/www/translan_data
 
 ## 2. PostgreSQL Setup
 
-```bash
-su - postgres
-psql
-```
-
-Inside psql:
-```sql
-CREATE USER translan_user WITH PASSWORD 'CHANGE_THIS_PASSWORD';
-CREATE DATABASE translan_db OWNER translan_user;
-\c translan_db
-CREATE EXTENSION IF NOT EXISTS vector;
-GRANT ALL PRIVILEGES ON DATABASE translan_db TO translan_user;
-\q
-```
+Run this single block — it switches to the postgres user, opens psql, runs all SQL, then exits back to root:
 
 ```bash
-exit  -- back to root
+su - postgres -c "psql -c \"CREATE USER translan_user WITH PASSWORD 'CHANGE_THIS_PASSWORD';\" \
+  -c \"CREATE DATABASE translan_db OWNER translan_user;\" \
+  -c \"\\\\c translan_db\" \
+  -c \"CREATE EXTENSION IF NOT EXISTS vector;\" \
+  -c \"GRANT ALL PRIVILEGES ON DATABASE translan_db TO translan_user;\""
 ```
+
+> **Or step by step** (if you prefer interactive mode):
+> ```bash
+> su - postgres          # switch to postgres user
+> psql                   # now you are INSIDE the psql prompt (postgres=#)
+> ```
+> Then paste each line one at a time **inside psql**:
+> ```sql
+> CREATE USER translan_user WITH PASSWORD 'CHANGE_THIS_PASSWORD';
+> CREATE DATABASE translan_db OWNER translan_user;
+> \c translan_db
+> CREATE EXTENSION IF NOT EXISTS vector;
+> GRANT ALL PRIVILEGES ON DATABASE translan_db TO translan_user;
+> \q
+> ```
+> ```bash
+> exit                   # back to root
+> ```
 
 ---
 
