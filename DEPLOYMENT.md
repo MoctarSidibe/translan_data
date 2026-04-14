@@ -2,333 +2,285 @@
 
 **App Server:** `173.212.220.11`  
 **GitHub:** `https://github.com/MoctarSidibe/translan_data`  
-**Project root:** `/var/www/translan_data/`  
-**Jenkins (local):** `http://173.212.220.11:8080`
+**Coolify UI:** `http://173.212.220.11:8000` (after install)
+
+---
+
+## Why Coolify?
+
+Coolify replaces the entire manual stack in one tool:
+
+| What you did manually | What Coolify does instead |
+|-----------------------|--------------------------|
+| Install + configure Nginx | **Traefik** (built-in, automatic) |
+| SSL certificate (certbot) | **Auto SSL via Let's Encrypt** |
+| Write systemd service | **Docker container** (auto-restart) |
+| Jenkins pipeline for deploy | **GitHub webhook → auto-deploy** |
+| Manual `git pull` + restart | **Zero-downtime redeploy on push** |
+| Manage multiple servers | **One Coolify UI for all servers** |
+
+> **Traefik is built into Coolify** — you do not install it separately.  
+> **Docker is Coolify's native runtime** — your app runs as a container, no systemd needed.  
+> **APK builds** still use EAS (Coolify is backend/web only).
+
+---
+
+## Architecture (with Coolify)
+
+```
+173.212.220.11
+│
+├── Coolify  :8000 (management UI)
+│   └── Traefik :80/:443  (built-in reverse proxy + auto SSL)
+│       └── translan_data  → Docker container :8000 (FastAPI)
+│
+└── PostgreSQL  (managed by Coolify or standalone)
+```
 
 ---
 
 ## Current Status
 
 ```
-✅ 1.  Server dependencies installed      (python3.12, postgresql, nginx, git)
-✅ 2.  PostgreSQL setup                   (translan_db, translan_user, vector extension)
-✅ 3.  Repo cloned                        (/var/www/translan_data/)
-✅ 4.  Python venv + dependencies         (venv/bin/python3.12)
-✅ 5.  .env file created                  (DATABASE_URL, SECRET_KEY set)
-✅ 6.  Database tables initialized        (create_tables ran clean)
-✅ 7.  Systemd service running            (translan_data.service — port 8100)
-✅ 8.  Nginx configured                   (/translan_data/ → :8100)
-✅ 9.  API live and healthy               (http://173.212.220.11/translan_data/health → 200)
-✅ 10. Production URL set in mobile app   (mobile/services/api.ts)
+✅ 1.  Server provisioned                 (Ubuntu 24.04, 173.212.220.11)
+✅ 2.  GitHub repo live                   (github.com/MoctarSidibe/translan_data)
+✅ 3.  Dockerfile added                   (backend/Dockerfile)
 
-⏳ 11. Install Jenkins on 173.212.220.11  ← YOU ARE HERE
-⏳ 12. Configure Jenkins pipeline
-⏳ 13. APK build
+⏳ 4.  Install Coolify                    ← START HERE (fresh server)
+⏳ 5.  Add PostgreSQL via Coolify
+⏳ 6.  Deploy backend via Coolify
+⏳ 7.  Connect GitHub webhook
+⏳ 8.  APK build (EAS)
 ```
+
+> **Already deployed manually?** Jump to §9 — Migration from manual setup.
 
 ---
 
-## Architecture
+## ⏳ 4. Install Coolify  ← START HERE
 
-```
-173.212.220.11
-├── Nginx :80
-│   ├── /translan_data/  → uvicorn :8100  (FastAPI — LIVE ✅)
-│   └── /jenkins/        → Jenkins  :8080  (CI/CD — to install)
-│
-├── translan_data.service  (systemd, auto-restart)
-├── PostgreSQL             (translan_db)
-└── Jenkins                (builds APK + auto-deploys on git push)
-```
-
-Multi-app port map — no conflicts:
-
-| App           | Service port | Nginx prefix      |
-|---------------|-------------|-------------------|
-| translan_data | 8100        | `/translan_data/` |
-| Jenkins       | 8080        | `/jenkins/`       |
-| (next app)    | 8101        | `/…/`             |
-
----
-
-## ✅ 1. Server Setup (done)
-
+SSH into the server:
 ```bash
 ssh root@173.212.220.11
-apt update && apt upgrade -y
-apt install -y python3 python3-venv python3-pip \
-               postgresql postgresql-contrib \
-               nginx git curl build-essential libpq-dev
 ```
 
-> Server has **Python 3.12** — no extra PPA needed.
+Run the official one-line installer:
+```bash
+curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
+```
+
+This installs Docker, Traefik, and Coolify (~5 min). When done:
+
+```bash
+# Check everything is running
+docker ps
+# You should see: coolify, coolify-proxy (Traefik), coolify-db, coolify-redis
+```
+
+Open **`http://173.212.220.11:8000`** in your browser → complete the setup wizard (create admin account).
 
 ---
 
-## ✅ 2. PostgreSQL (done)
+## ⏳ 5. Add PostgreSQL via Coolify
 
+In the Coolify UI:
+
+1. **Resources → New Resource → Database → PostgreSQL**
+2. Fill in:
+   - Name: `translan-db`
+   - Version: **16** (latest stable with pgvector support)
+   - Database: `translan_db`
+   - Username: `translan_user`
+   - Password: (generate a strong one)
+3. Click **Deploy**
+
+> After deploy, Coolify shows you the **internal connection string** — use it as `DATABASE_URL` in the next step.
+
+### Enable pgvector extension
+
+Once the DB is running, open a terminal on the server:
 ```bash
-su - postgres   # switch to postgres user
-psql -c "CREATE USER translan_user WITH PASSWORD 'YOUR_PASSWORD';" \
-     -c "CREATE DATABASE translan_db OWNER translan_user;" \
-     -c "GRANT ALL PRIVILEGES ON DATABASE translan_db TO translan_user;"
-psql -d translan_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
-exit
+docker exec -it <postgres-container-name> psql -U translan_user -d translan_db \
+  -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
+
+Get the container name from `docker ps`.
 
 ---
 
-## ✅ 3. Backend Deployment (done)
+## ⏳ 6. Deploy Backend via Coolify
 
-```bash
-cd /var/www/translan_data
-git clone https://github.com/MoctarSidibe/translan_data.git .
+### 6.1 Connect GitHub
 
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
+Coolify UI → **Settings → Source → GitHub → Connect** → authorize the `MoctarSidibe/translan_data` repo.
 
-### .env file
-```bash
-cat > /var/www/translan_data/backend/.env << 'EOF'
-DATABASE_URL=postgresql+asyncpg://translan_user:YOUR_PASSWORD@localhost:5432/translan_db
+### 6.2 Create new Application
+
+**Resources → New Resource → Application → Docker**
+
+Fill in:
+- **Repository:** `MoctarSidibe/translan_data`
+- **Branch:** `main`
+- **Dockerfile location:** `backend/Dockerfile`
+- **Port:** `8000`
+- **Domain:** `173.212.220.11` (or your domain if you have one)
+- **Path prefix:** `/translan_data`
+
+### 6.3 Set environment variables
+
+In the app settings → **Environment Variables**:
+
+```env
+DATABASE_URL=postgresql+asyncpg://translan_user:YOUR_PASSWORD@<coolify-db-host>:5432/translan_db
 SECRET_KEY=YOUR_GENERATED_KEY
 GROQ_API_KEY=your_groq_api_key_here
 ANTHROPIC_API_KEY=
-BACKEND_CORS_ORIGINS=["http://173.212.220.11","http://173.212.220.11:8100","*"]
-UPLOAD_DIR=/var/www/translan_data/backend/uploads
+BACKEND_CORS_ORIGINS=["http://173.212.220.11","https://your-domain.com","*"]
+UPLOAD_DIR=/app/uploads
 MAX_FILE_SIZE_MB=50
-EOF
 ```
 
-Generate secret key: `python3 -c "import secrets; print(secrets.token_hex(32))"`
-
-### Initialize DB
+Generate secret key:
 ```bash
-source venv/bin/activate
-python -c "import asyncio; from app.database import create_tables; asyncio.run(create_tables())"
+python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-### Systemd service
+### 6.4 Deploy
+
+Click **Deploy** — Coolify will:
+1. Pull code from GitHub
+2. Build the Docker image using `backend/Dockerfile`
+3. Start the container
+4. Configure Traefik to route traffic to it
+
+Verify:
 ```bash
-cat > /etc/systemd/system/translan_data.service << 'EOF'
-[Unit]
-Description=Translan Data — FastAPI Backend
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/var/www/translan_data/backend
-Environment="PATH=/var/www/translan_data/backend/venv/bin"
-EnvironmentFile=/var/www/translan_data/backend/.env
-ExecStart=/var/www/translan_data/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8100 --workers 2
-Restart=always
-RestartSec=5
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable translan_data
-systemctl start translan_data
+curl http://173.212.220.11/translan_data/health
+# → {"status":"ok"}
 ```
 
 ---
 
-## ✅ 4. Nginx (done)
+## ⏳ 7. GitHub Webhook (auto-deploy on push)
 
-```bash
-cat > /etc/nginx/sites-available/translan_data << 'EOF'
-server {
-    listen 80;
-    server_name 173.212.220.11;
+Coolify generates a webhook URL automatically.
 
-    location /translan_data/ {
-        rewrite ^/translan_data(/.*)$ $1 break;
-        proxy_pass http://127.0.0.1:8100;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_connect_timeout 60s;
-        proxy_read_timeout 120s;
-        client_max_body_size 55M;
-    }
+In Coolify app settings → **Webhooks** → copy the URL.
 
-    location /jenkins/ {
-        proxy_pass http://127.0.0.1:8080/jenkins/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 90s;
-    }
-}
-EOF
-
-ln -s /etc/nginx/sites-available/translan_data /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx
-```
-
-Verify API:
-```bash
-curl http://173.212.220.11/translan_data/health   # → {"status":"ok"}
-```
-
----
-
-## ⏳ 5. Install Jenkins on 173.212.220.11  ← NEXT STEP
-
-Jenkins will run on the same server — no SSH needed for deploys.
-
-### 5.1 Install Java (Jenkins requires Java 17+)
-```bash
-apt install -y fontconfig openjdk-17-jre
-java -version   # should show openjdk 17
-```
-
-### 5.2 Install Jenkins
-```bash
-wget -O /usr/share/keyrings/jenkins-keyring.asc \
-  https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
-
-echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
-  https://pkg.jenkins.io/debian-stable binary/" \
-  | tee /etc/apt/sources.list.d/jenkins.list > /dev/null
-
-apt update
-apt install -y jenkins
-systemctl enable jenkins
-systemctl start jenkins
-systemctl status jenkins
-```
-
-### 5.3 Configure Jenkins prefix (for Nginx /jenkins/ path)
-```bash
-echo 'JENKINS_ARGS="--prefix=/jenkins"' >> /etc/default/jenkins
-systemctl restart jenkins
-```
-
-### 5.4 Get initial admin password
-```bash
-cat /var/lib/jenkins/secrets/initialAdminPassword
-```
-
-Open `http://173.212.220.11/jenkins` in your browser and complete the setup wizard.
-
-### 5.5 Install Node.js (for APK build)
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt install -y nodejs
-node --version   # v20.x
-```
-
----
-
-## ⏳ 6. Jenkins Pipeline Setup
-
-The `Jenkinsfile` is already in the repo. Since Jenkins runs on the same server as the app, deploys are local — no SSH required.
-
-### 6.1 Add Expo token credential
-
-For EAS cloud APK builds, Jenkins needs your Expo account token:
-1. Create free account at `https://expo.dev`
-2. Settings → Access Tokens → Create token → copy it
-3. Jenkins → **Manage Jenkins → Credentials → Global → Add Credentials**
-   - Kind: **Secret text**
-   - ID: `expo-token`
-   - Secret: paste token
-
-### 6.2 Create Pipeline job
-
-1. **New Item** → `translan_data` → **Pipeline** → OK
-2. Pipeline:
-   - Definition: **Pipeline script from SCM**
-   - SCM: **Git**
-   - URL: `https://github.com/MoctarSidibe/translan_data.git`
-   - Branch: `*/main`
-   - Script Path: `Jenkinsfile`
-3. **Save** → **Build Now**
-
-### 6.3 GitHub webhook
-
-GitHub repo → Settings → Webhooks → Add webhook:
-- URL: `http://173.212.220.11/jenkins/github-webhook/`
+Then in GitHub:
+- Repo → **Settings → Webhooks → Add webhook**
+- Payload URL: paste Coolify's webhook URL
 - Content type: `application/json`
-- Event: push
+- Event: **Just the push event**
+
+From now on: every `git push origin main` → Coolify rebuilds and redeploys automatically.
 
 ---
 
-## ⏳ 7. APK Build & Install
+## ⏳ 8. APK Build (EAS)
 
-After the Jenkins Build APK stage completes:
-1. Go to `https://expo.dev` → your project → **Builds**
-2. Download the `.apk`
-3. Install on Android device directly
+Coolify does not build mobile APKs. Use EAS cloud build:
+
+**One-time setup (local machine):**
+```bash
+cd mobile
+npm install -g eas-cli
+eas login          # logs in via browser — no token needed locally
+eas build --platform android --profile preview
+```
+
+EAS gives you a download link when done (~5–10 min). Install the `.apk` directly on your Android device.
+
+**For automated builds on every push**, EAS needs a token (for CI):
+1. `https://expo.dev` → Settings → Access Tokens → Create token
+2. Set `EXPO_TOKEN` in your CI environment
 
 ---
 
-## 8. Day-to-Day Commands
+## 9. Migration from Manual Setup
+
+If you already deployed manually (systemd + Nginx) and want to switch to Coolify:
 
 ```bash
-# Backend logs
-journalctl -u translan_data -f
+# Stop the manual service
+systemctl stop translan_data
+systemctl disable translan_data
 
-# Restart backend
-systemctl restart translan_data
+# Remove manual Nginx config (Coolify/Traefik takes over)
+rm /etc/nginx/sites-enabled/translan_data
+systemctl stop nginx
+systemctl disable nginx
 
-# Pull latest manually (Jenkins does this automatically)
-cd /var/www/translan_data && git pull origin main
+# Install Coolify (it brings its own Traefik)
+curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
+```
 
-# Nginx reload
-systemctl reload nginx
+Then follow steps 4–7 above. Your `.env` values stay the same.
 
-# Jenkins logs
-journalctl -u jenkins -f
+---
+
+## 10. Day-to-Day
+
+```bash
+# View app logs
+docker logs <container-name> -f
+
+# View all running containers
+docker ps
+
+# Restart app manually
+docker restart <container-name>
+
+# Coolify UI
+http://173.212.220.11:8000
+
+# DB connection (from server)
+docker exec -it <postgres-container> psql -U translan_user -d translan_db
 ```
 
 ---
 
-## 9. Directory Layout
+## 11. Directory Layout
 
 ```
-/var/www/translan_data/
-├── backend/
-│   ├── venv/        ← Python virtualenv (not in git)
-│   ├── uploads/     ← user uploads (not in git)
-│   ├── .env         ← secrets (not in git)
-│   └── main.py
-└── mobile/          ← source only; APK built via EAS
+/var/www/translan_data/     ← source (git clone, used by Coolify)
+└── backend/
+    ├── Dockerfile          ← Coolify builds from this
+    ├── .env                ← set via Coolify UI (not committed)
+    └── uploads/            ← mounted as Docker volume
 
-/var/lib/jenkins/    ← Jenkins home
+/data/coolify/              ← Coolify data (configs, DB volumes)
 ```
 
 ---
 
-## 10. Security Checklist
+## 12. Security Checklist
 
-- [x] SECRET_KEY set to strong random value
-- [x] SSH key auth for server access
-- [ ] Strong PostgreSQL password (replace placeholder)
-- [ ] Remove `"*"` from BACKEND_CORS_ORIGINS
-- [ ] SSL: `certbot --nginx -d your-domain.com`
-- [ ] Firewall: `ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable`
-- [ ] Add GROQ_API_KEY to .env on server
+- [ ] Strong PostgreSQL password
+- [ ] `SECRET_KEY` set to strong random value
+- [ ] Remove `"*"` from `BACKEND_CORS_ORIGINS` before going public
+- [ ] Enable SSL in Coolify (add domain → Coolify handles Let's Encrypt automatically)
+- [ ] Firewall: `ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw allow 8000 && ufw enable`
+- [ ] Add GROQ_API_KEY via Coolify environment variables
 
 ---
 
-## 11. DevOps Recommendation — Future Scale
+## 13. Multi-Server & Future Apps
 
-For managing multiple apps across multiple servers, consider:
+Coolify's biggest advantage: manage all your servers and apps from **one UI**.
 
-| Tool | Purpose | Cost |
-|------|---------|------|
-| **Coolify** | Self-hosted PaaS — manages apps, DBs, SSL, reverse proxy across servers from one UI. Replaces manual Nginx + Jenkins setup | Free |
-| **Traefik** | Automatic reverse proxy + SSL for Docker-based apps | Free |
-| **Portainer** | Docker container management UI | Free (CE) |
-| **Cloudflare Tunnel** | Expose apps without opening ports, DDoS protection | Free tier |
-| **Ansible** | Automate deployments to multiple servers via playbooks | Free |
+**Add your second server (`37.60.240.199`):**
+- Coolify UI → **Servers → Add Server**
+- Enter IP + SSH key → Coolify installs its agent on the remote server
+- Now deploy any new app to either server from the same dashboard
 
-**Best starting point:** Install **Coolify** on one server → connect both servers to it → deploy all future apps from the Coolify dashboard. Handles everything DEPLOYMENT.md does manually, in a few clicks.
+**Deploy a new app:**
+- Resources → New → Application → pick repo, branch, Dockerfile → Deploy
+- Traefik routing and SSL handled automatically — no Nginx config to write
+
+| Tool | Role | Installed by |
+|------|------|-------------|
+| Coolify | Management UI + orchestration | You (one-liner) |
+| Traefik | Reverse proxy + SSL | Coolify (automatic) |
+| Docker | Container runtime | Coolify (automatic) |
+| PostgreSQL | Database | Coolify UI |
